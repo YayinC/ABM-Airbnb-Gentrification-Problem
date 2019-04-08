@@ -1,7 +1,5 @@
 # Agent Based Modeling: Airbnb's Gentrification Problem
-By Yayin Cai & Xiao Wu
-This is a agent-based modeling project using NetLogo, which simulates how Airbnb gentrifies the neighborhoods
-
+By Yayin Cai & Xiao Wu   
 
 ## WHAT IS IT?
 This model provides a simple sandbox to simulate the role Airbnb plays in gentrification. There are patches representing streets, residential, commercial, places of interests and parks, and two kinds of agents representing AirBnbs and long-term rental houses.  
