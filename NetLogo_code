@@ -1,0 +1,429 @@
+breed [crime]                                                                                                              ;a breed for just crime points
+breed [vacant]                                                                                                             ;a breed denoting vacant buildings
+breed [buyers]
+breed [AirBNBs AirBNB]                                                                                                     ;a breed representing Airbnb
+breed [rentals rental]                                                                                                     ;a breed representing long-term rental units
+
+patches-own
+ [
+   street                                                                                                                  ;is the patch a street or not
+   land-value
+   tourism-value                                                                                                           ;a measure of proximity to amenities or disamenities
+   avenue                                                                                                                  ;the major north/south streets
+   parcel                                                                                                                  ;whether some can or can't be built
+   landUse                                                                                                                 ;what is built on a patch
+   Tourism
+   Park
+   CBD_Dist                                                                                                                ;this is how we measure and scale distance to amenties
+   CBD_Metric                                                                                                              ;more info below
+   Avenue_Dist
+   Avenue_Metric
+   Tourism_Dist
+   Tourism_Metric
+   Vacant_Dist
+   Vacant_Metric
+   Crime_Dist
+   Crime_Metric
+   Park_Dist
+   Park_Metric
+   sold-yet
+   num-rental
+   Airbnb_count
+   Airbnb_rent
+   rental_rent
+   change_count
+   initial_rental
+ ]
+
+globals [
+  Airbnb_sum
+  rental_sum
+  initial_count
+  ]
+
+
+to setup
+  clear-all
+  ca
+  ask patches with [pxcor != 0 and pycor != 0]                                                                       ;here we're setting up the street grid
+   [
+    if abs pxcor mod 6 = 0 or pycor mod 6 = 0
+      [set pcolor 5 set street 1]
+    ask patches with [pxcor = 0 or pxcor = 1 or pycor = 0 or pycor = 1]
+      [set pcolor 5 set street 1 set avenue 1]
+   ]
+
+    ask patches with [street = 0 and count patches with [street = 1] in-radius 1 = 1 or                              ;here we're setting up the parcels
+                      count patches with [street = 1] in-radius 1 = 2]
+      [set parcel 1]
+
+    ask patches with [parcel = 1] [set sold-yet "No"]                                                                ;to begin, in the context of a gentrification simulation, we'll set a variable denoting that a parcel has not sold yet
+
+    ask n-of (count patches with [parcel = 1] * .7) patches with                                                     ;set a 70%/20% mix of residential and commercial parcels
+      [landUse = 0 and parcel = 1] [set landUse "residential"]
+    ask n-of (count patches with [parcel = 1] * .2) patches with
+      [landUse = 0 and parcel = 1] [set landUse "commercial"]
+
+    ask n-of (count patches with [parcel = 1] * .05) patches with                                                   ;tourism. If so, use this code just don't forget to adjust the percentages
+      [landUse = 0 and parcel = 1] [set landUse "tourism"]
+    ask n-of (count patches with [parcel = 1] * .01) patches with                                                   ;park. If so, use this code just don't forget to adjust the percentages
+      [landUse = 0 and parcel = 1] [set landUse "park"]
+    ask patches with [landUse = "park"] [ask neighbors with [street = 0]
+      [set landUse "park" set parcel 1]]
+
+
+
+   create-parcel-points
+   ask n-of 1 patches with [landUse = "residential" and count vacant-here = 0][sprout-AirBNBs 1]                    ;the first Airbnb randomly emerges in a residential
+   ask n-of (count patches with [landUse = "residential" and count vacant-here = 0] - 1) patches with               ;the rest parcels are long-term rental units
+   [landUse = "residential" and count AirBNBs-here = 0 and count vacant-here = 0][sprout-rentals 1]
+
+   set initial_count count patches with [landUse = "residential" and count vacant-here = 0] - 1                     ;count the initial number of long-term rental units
+
+   ask AirBNBs
+   [
+     set color pink
+     set shape "circle"
+
+   ]
+
+   ask rentals
+    [
+       set color cyan + 3
+       set shape "circle"
+     ]
+
+
+   ask patches with [landUse = "residential"] [set change_count 0]
+
+
+
+  calculate-land-value                                                                       ;a routine that calculate land value based on distance to (dis)amenities
+  calculate-tourism-value                                                                    ;a routine that calculate tourism potential based on distance to (dis)amenities
+  update-patch-color
+
+  reset-ticks
+  setup-plots
+end
+
+to calculate-land-value
+
+  ask patches with [street = 0]
+   [
+     ;Acess to Central Business District (CBD)
+     set CBD_Dist distance patch 0 0                                                                                 ;so meausure distance to patch 0 0 (the center)
+     ;Access to avenues
+     set Avenue_Dist distance min-one-of patches with [avenue = 1] [distance myself]
+     ;Proximity to Vacants
+
+     ifelse count vacant >= 3[
+     let nearVacants min-n-of 3 vacant [distance myself]
+     set Vacant_Dist mean [distance myself] of nearVacants
+     ]                                                      ;measure from each parcel to it's nearest vacants
+     [
+       set Vacant_Dist 1000
+     ]
+     ;Proximity to Crime
+     let nearCrime min-n-of 3 crime [distance myself]
+     set Crime_Dist mean [distance myself] of nearCrime
+     ;Distance to tourism
+     set Park_Dist distance min-one-of patches with [landUse = "park"] [distance myself]
+   ]
+
+     let a sort [CBD_Dist] of patches with [street = 0]                                                                                    ;create a list of sorted cbd distances for each parcel
+     let nlist length a print nlist                                                                                                        ;let is a temporary variable that is the length of this list
+     ask patches with [street = 0 and CBD_Dist <= item (.1 * (nlist + 1)) a] [set CBD_Metric 10]                                           ;the first 10% of distances (the closest) get the highest score of '10'
+     ask patches with [street = 0 and CBD_Dist > item (.1 * (nlist + 1)) a and CBD_Dist <= item (.2 * (nlist + 1)) a] [set CBD_Metric 9]
+     ask patches with [street = 0 and CBD_Dist > item (.2 * (nlist + 1)) a and CBD_Dist <= item (.3 * (nlist + 1)) a] [set CBD_Metric 8]
+     ask patches with [street = 0 and CBD_Dist > item (.3 * (nlist + 1)) a and CBD_Dist <= item (.4 * (nlist + 1)) a] [set CBD_Metric 7]
+     ask patches with [street = 0 and CBD_Dist > item (.4 * (nlist + 1)) a and CBD_Dist <= item (.5 * (nlist + 1)) a] [set CBD_Metric 6]
+     ask patches with [street = 0 and CBD_Dist > item (.5 * (nlist + 1)) a and CBD_Dist <= item (.6 * (nlist + 1)) a] [set CBD_Metric 5]
+     ask patches with [street = 0 and CBD_Dist > item (.6 * (nlist + 1)) a and CBD_Dist <= item (.7 * (nlist + 1)) a] [set CBD_Metric 4]
+     ask patches with [street = 0 and CBD_Dist > item (.7 * (nlist + 1)) a and CBD_Dist <= item (.8 * (nlist + 1)) a] [set CBD_Metric 3]
+     ask patches with [street = 0 and CBD_Dist > item (.8 * (nlist + 1)) a and CBD_Dist <= item (.9 * (nlist + 1)) a] [set CBD_Metric 2]
+     ask patches with [street = 0 and CBD_Dist > item (.9 * (nlist + 1)) a ] [set CBD_Metric 1]                                            ;the last 10 percent get the lowest score of '1'
+
+  let b sort [Avenue_Dist] of patches with [street = 0]                                                                                    ;do this for all the amenities
+     let nlist2 length b
+     ask patches with [street = 0 and Avenue_Dist <= item (.1 * (nlist2 + 1)) b] [set Avenue_Metric 10]
+     ask patches with [street = 0 and Avenue_Dist > item (.1 * (nlist2 + 1)) b and Avenue_Dist <= item (.2 * (nlist2 + 1)) b] [set Avenue_Metric 9]
+     ask patches with [street = 0 and Avenue_Dist > item (.2 * (nlist2 + 1)) b and Avenue_Dist <= item (.3 * (nlist2 + 1)) b] [set Avenue_Metric 8]
+     ask patches with [street = 0 and Avenue_Dist > item (.3 * (nlist2 + 1)) b and Avenue_Dist <= item (.4 * (nlist2 + 1)) b] [set Avenue_Metric 7]
+     ask patches with [street = 0 and Avenue_Dist > item (.4 * (nlist2 + 1)) b and Avenue_Dist <= item (.5 * (nlist2 + 1)) b] [set Avenue_Metric 6]
+     ask patches with [street = 0 and Avenue_Dist > item (.5 * (nlist2 + 1)) b and Avenue_Dist <= item (.6 * (nlist2 + 1)) b] [set Avenue_Metric 5]
+     ask patches with [street = 0 and Avenue_Dist > item (.6 * (nlist2 + 1)) b and Avenue_Dist <= item (.7 * (nlist2 + 1)) b] [set Avenue_Metric 4]
+     ask patches with [street = 0 and Avenue_Dist > item (.7 * (nlist2 + 1)) b and Avenue_Dist <= item (.8 * (nlist2 + 1)) b] [set Avenue_Metric 3]
+     ask patches with [street = 0 and Avenue_Dist > item (.8 * (nlist2 + 1)) b and Avenue_Dist <= item (.9 * (nlist2 + 1)) b] [set Avenue_Metric 2]
+     ask patches with [street = 0 and Avenue_Dist > item (.9 * (nlist2 + 1)) b ] [set Avenue_Metric 1]
+
+  let c sort [Vacant_Dist] of patches with [street = 0]
+     let nlist3 length c
+     ask patches with [street = 0 and Vacant_Dist <= item (.1 * (nlist3 + 1)) c] [set Vacant_Metric 1]
+     ask patches with [street = 0 and Vacant_Dist > item (.1 * (nlist3 + 1)) c and Vacant_Dist <= item (.2 * (nlist3 + 1)) c] [set Vacant_Metric 2]
+     ask patches with [street = 0 and Vacant_Dist > item (.2 * (nlist3 + 1)) c and Vacant_Dist <= item (.3 * (nlist3 + 1)) c] [set Vacant_Metric 3]
+     ask patches with [street = 0 and Vacant_Dist > item (.3 * (nlist3 + 1)) c and Vacant_Dist <= item (.4 * (nlist3 + 1)) c] [set Vacant_Metric 4]
+     ask patches with [street = 0 and Vacant_Dist > item (.4 * (nlist3 + 1)) c and Vacant_Dist <= item (.5 * (nlist3 + 1)) c] [set Vacant_Metric 5]
+     ask patches with [street = 0 and Vacant_Dist > item (.5 * (nlist3 + 1)) c and Vacant_Dist <= item (.6 * (nlist3 + 1)) c] [set Vacant_Metric 6]
+     ask patches with [street = 0 and Vacant_Dist > item (.6 * (nlist3 + 1)) c and Vacant_Dist <= item (.7 * (nlist3 + 1)) c] [set Vacant_Metric 7]
+     ask patches with [street = 0 and Vacant_Dist > item (.7 * (nlist3 + 1)) c and Vacant_Dist <= item (.8 * (nlist3 + 1)) c] [set Vacant_Metric 8]
+     ask patches with [street = 0 and Vacant_Dist > item (.8 * (nlist3 + 1)) c and Vacant_Dist <= item (.9 * (nlist3 + 1)) c] [set Vacant_Metric 9]
+     ask patches with [street = 0 and Vacant_Dist > item (.9 * (nlist3 + 1)) c ] [set Vacant_Metric 10]
+
+  let d sort [Crime_Dist] of patches with [street = 0]
+     let nlist4 length d
+     ask patches with [street = 0 and Crime_Dist <= item (.1 * (nlist4 + 1)) d] [set Crime_Metric 1]
+     ask patches with [street = 0 and Crime_Dist > item (.1 * (nlist4 + 1)) d and Crime_Dist <= item (.2 * (nlist4 + 1)) d] [set Crime_Metric 2]
+     ask patches with [street = 0 and Crime_Dist > item (.2 * (nlist4 + 1)) d and Crime_Dist <= item (.3 * (nlist4 + 1)) d] [set Crime_Metric 3]
+     ask patches with [street = 0 and Crime_Dist > item (.3 * (nlist4 + 1)) d and Crime_Dist <= item (.4 * (nlist4 + 1)) d] [set Crime_Metric 4]
+     ask patches with [street = 0 and Crime_Dist > item (.4 * (nlist4 + 1)) d and Crime_Dist <= item (.5 * (nlist4 + 1)) d] [set Crime_Metric 5]
+     ask patches with [street = 0 and Crime_Dist > item (.5 * (nlist4 + 1)) d and Crime_Dist <= item (.6 * (nlist4 + 1)) d] [set Crime_Metric 6]
+     ask patches with [street = 0 and Crime_Dist > item (.6 * (nlist4 + 1)) d and Crime_Dist <= item (.7 * (nlist4 + 1)) d] [set Crime_Metric 7]
+     ask patches with [street = 0 and Crime_Dist > item (.7 * (nlist4 + 1)) d and Crime_Dist <= item (.8 * (nlist4 + 1)) d] [set Crime_Metric 8]
+     ask patches with [street = 0 and Crime_Dist > item (.8 * (nlist4 + 1)) d and Crime_Dist <= item (.9 * (nlist4 + 1)) d] [set Crime_Metric 9]
+     ask patches with [street = 0 and Crime_Dist > item (.9 * (nlist4 + 1)) d ] [set Crime_Metric 10]
+
+  let g sort [Park_Dist] of patches with [street = 0]
+     let nlist6 length g
+     ask patches with [street = 0 and Park_Dist <= item (.1 * (nlist6 + 1)) g] [set Park_Metric 10]
+     ask patches with [street = 0 and Park_Dist > item (.1 * (nlist6 + 1)) g and Park_Dist <= item (.2 * (nlist6 + 1)) g] [set Park_Metric 9]
+     ask patches with [street = 0 and Park_Dist > item (.2 * (nlist6 + 1)) g and Park_Dist <= item (.3 * (nlist6 + 1)) g] [set Park_Metric 8]
+     ask patches with [street = 0 and Park_Dist > item (.3 * (nlist6 + 1)) g and Park_Dist <= item (.4 * (nlist6 + 1)) g] [set Park_Metric 7]
+     ask patches with [street = 0 and Park_Dist > item (.4 * (nlist6 + 1)) g and Park_Dist <= item (.5 * (nlist6 + 1)) g] [set Park_Metric 6]
+     ask patches with [street = 0 and Park_Dist > item (.5 * (nlist6 + 1)) g and Park_Dist <= item (.6 * (nlist6 + 1)) g] [set Park_Metric 5]
+     ask patches with [street = 0 and Park_Dist > item (.6 * (nlist6 + 1)) g and Park_Dist <= item (.7 * (nlist6 + 1)) g] [set Park_Metric 4]
+     ask patches with [street = 0 and Park_Dist > item (.7 * (nlist6 + 1)) g and Park_Dist <= item (.8 * (nlist6 + 1)) g] [set Park_Metric 3]
+     ask patches with [street = 0 and Park_Dist > item (.8 * (nlist6 + 1)) g and Park_Dist <= item (.9 * (nlist6 + 1)) g] [set Park_Metric 2]
+     ask patches with [street = 0 and Park_Dist > item (.9 * (nlist6 + 1)) g ] [set Park_Metric 1]
+
+   ask patches with [street = 0]
+   [
+     set land-value (CBD_Metric * CBD_Multiplier) + (Avenue_Metric * Avenue_Multiplier) + (Vacant_Metric * Vacancy_Multiplier) +            ;set land value = to the scaled amenity score
+                    (Crime_Metric * Crime_Multiplier) + (Park_Metric * Park_Multiplier)
+   ]                                                                                                                                        ;variables for each amenity set by the user on the interface.
+end
+
+to calculate-tourism-value                                                                                              ;the way this routine works is to measure distance to an (dis)amenity (ie. 'CDB_Dist')
+                                                                                                                     ;and then scale those distances in to deciles below (ie. 'CBC_Metric'. Note that
+                                                                                                                     ;amenties run from 10-1 (nearest = good; farthest = bad) and disanenites are the opposite
+  ask patches with [street = 0]                                                                                      ;only calculate land value for the parcels
+   [
+     ;Acess to Central Business District (CBD)
+     set CBD_Dist distance patch 0 0                                                                                 ;so meausure distance to patch 0 0 (the center)
+     ;Access to avenues
+     set Avenue_Dist distance min-one-of patches with [avenue = 1] [distance myself]
+     ;Proximity to Vacants
+     ifelse count vacant > 3[
+     let nearVacants min-n-of 3 vacant [distance myself]                                                             ;measure from each parcel to it's nearest vacants
+     set Vacant_Dist mean [distance myself] of nearVacants
+     ]
+     [
+       set Vacant_Dist 1000                                                                                          ;if there is no more vacant land, just set it to be a extremely large number
+     ]
+     ;Proximity to Crime
+     let nearCrime min-n-of 3 crime [distance myself]
+     set Crime_Dist mean [distance myself] of nearCrime
+     ;Distance to tourism
+     set Tourism_Dist distance min-one-of patches with [landUse = "tourism"] [distance myself]
+     ;Distance to park
+     set Park_Dist distance min-one-of patches with [landUse = "park"] [distance myself]
+
+   ]
+
+     let a sort [CBD_Dist] of patches with [street = 0]                                                                                    ;create a list of sorted cbd distances for each parcel
+     let nlist length a print nlist                                                                                                        ;let is a temporary variable that is the length of this list
+     ask patches with [street = 0 and CBD_Dist <= item (.1 * (nlist + 1)) a] [set CBD_Metric 10]                                           ;the first 10% of distances (the closest) get the highest score of '10'
+     ask patches with [street = 0 and CBD_Dist > item (.1 * (nlist + 1)) a and CBD_Dist <= item (.2 * (nlist + 1)) a] [set CBD_Metric 9]
+     ask patches with [street = 0 and CBD_Dist > item (.2 * (nlist + 1)) a and CBD_Dist <= item (.3 * (nlist + 1)) a] [set CBD_Metric 8]
+     ask patches with [street = 0 and CBD_Dist > item (.3 * (nlist + 1)) a and CBD_Dist <= item (.4 * (nlist + 1)) a] [set CBD_Metric 7]
+     ask patches with [street = 0 and CBD_Dist > item (.4 * (nlist + 1)) a and CBD_Dist <= item (.5 * (nlist + 1)) a] [set CBD_Metric 6]
+     ask patches with [street = 0 and CBD_Dist > item (.5 * (nlist + 1)) a and CBD_Dist <= item (.6 * (nlist + 1)) a] [set CBD_Metric 5]
+     ask patches with [street = 0 and CBD_Dist > item (.6 * (nlist + 1)) a and CBD_Dist <= item (.7 * (nlist + 1)) a] [set CBD_Metric 4]
+     ask patches with [street = 0 and CBD_Dist > item (.7 * (nlist + 1)) a and CBD_Dist <= item (.8 * (nlist + 1)) a] [set CBD_Metric 3]
+     ask patches with [street = 0 and CBD_Dist > item (.8 * (nlist + 1)) a and CBD_Dist <= item (.9 * (nlist + 1)) a] [set CBD_Metric 2]
+     ask patches with [street = 0 and CBD_Dist > item (.9 * (nlist + 1)) a ] [set CBD_Metric 1]                                            ;the last 10 percent get the lowest score of '1'
+
+  let b sort [Avenue_Dist] of patches with [street = 0]                                                                                    ;do this for all the amenities (feel free to add your own)
+     let nlist2 length b
+     ask patches with [street = 0 and Avenue_Dist <= item (.1 * (nlist2 + 1)) b] [set Avenue_Metric 10]
+     ask patches with [street = 0 and Avenue_Dist > item (.1 * (nlist2 + 1)) b and Avenue_Dist <= item (.2 * (nlist2 + 1)) b] [set Avenue_Metric 9]
+     ask patches with [street = 0 and Avenue_Dist > item (.2 * (nlist2 + 1)) b and Avenue_Dist <= item (.3 * (nlist2 + 1)) b] [set Avenue_Metric 8]
+     ask patches with [street = 0 and Avenue_Dist > item (.3 * (nlist2 + 1)) b and Avenue_Dist <= item (.4 * (nlist2 + 1)) b] [set Avenue_Metric 7]
+     ask patches with [street = 0 and Avenue_Dist > item (.4 * (nlist2 + 1)) b and Avenue_Dist <= item (.5 * (nlist2 + 1)) b] [set Avenue_Metric 6]
+     ask patches with [street = 0 and Avenue_Dist > item (.5 * (nlist2 + 1)) b and Avenue_Dist <= item (.6 * (nlist2 + 1)) b] [set Avenue_Metric 5]
+     ask patches with [street = 0 and Avenue_Dist > item (.6 * (nlist2 + 1)) b and Avenue_Dist <= item (.7 * (nlist2 + 1)) b] [set Avenue_Metric 4]
+     ask patches with [street = 0 and Avenue_Dist > item (.7 * (nlist2 + 1)) b and Avenue_Dist <= item (.8 * (nlist2 + 1)) b] [set Avenue_Metric 3]
+     ask patches with [street = 0 and Avenue_Dist > item (.8 * (nlist2 + 1)) b and Avenue_Dist <= item (.9 * (nlist2 + 1)) b] [set Avenue_Metric 2]
+     ask patches with [street = 0 and Avenue_Dist > item (.9 * (nlist2 + 1)) b ] [set Avenue_Metric 1]
+
+  let c sort [Vacant_Dist] of patches with [street = 0]
+     let nlist3 length c
+     ask patches with [street = 0 and Vacant_Dist <= item (.1 * (nlist3 + 1)) c] [set Vacant_Metric 1]
+     ask patches with [street = 0 and Vacant_Dist > item (.1 * (nlist3 + 1)) c and Vacant_Dist <= item (.2 * (nlist3 + 1)) c] [set Vacant_Metric 2]
+     ask patches with [street = 0 and Vacant_Dist > item (.2 * (nlist3 + 1)) c and Vacant_Dist <= item (.3 * (nlist3 + 1)) c] [set Vacant_Metric 3]
+     ask patches with [street = 0 and Vacant_Dist > item (.3 * (nlist3 + 1)) c and Vacant_Dist <= item (.4 * (nlist3 + 1)) c] [set Vacant_Metric 4]
+     ask patches with [street = 0 and Vacant_Dist > item (.4 * (nlist3 + 1)) c and Vacant_Dist <= item (.5 * (nlist3 + 1)) c] [set Vacant_Metric 5]
+     ask patches with [street = 0 and Vacant_Dist > item (.5 * (nlist3 + 1)) c and Vacant_Dist <= item (.6 * (nlist3 + 1)) c] [set Vacant_Metric 6]
+     ask patches with [street = 0 and Vacant_Dist > item (.6 * (nlist3 + 1)) c and Vacant_Dist <= item (.7 * (nlist3 + 1)) c] [set Vacant_Metric 7]
+     ask patches with [street = 0 and Vacant_Dist > item (.7 * (nlist3 + 1)) c and Vacant_Dist <= item (.8 * (nlist3 + 1)) c] [set Vacant_Metric 8]
+     ask patches with [street = 0 and Vacant_Dist > item (.8 * (nlist3 + 1)) c and Vacant_Dist <= item (.9 * (nlist3 + 1)) c] [set Vacant_Metric 9]
+     ask patches with [street = 0 and Vacant_Dist > item (.9 * (nlist3 + 1)) c ] [set Vacant_Metric 10]
+
+  let d sort [Crime_Dist] of patches with [street = 0]
+     let nlist4 length d
+     ask patches with [street = 0 and Crime_Dist <= item (.1 * (nlist4 + 1)) d] [set Crime_Metric 1]
+     ask patches with [street = 0 and Crime_Dist > item (.1 * (nlist4 + 1)) d and Crime_Dist <= item (.2 * (nlist4 + 1)) d] [set Crime_Metric 2]
+     ask patches with [street = 0 and Crime_Dist > item (.2 * (nlist4 + 1)) d and Crime_Dist <= item (.3 * (nlist4 + 1)) d] [set Crime_Metric 3]
+     ask patches with [street = 0 and Crime_Dist > item (.3 * (nlist4 + 1)) d and Crime_Dist <= item (.4 * (nlist4 + 1)) d] [set Crime_Metric 4]
+     ask patches with [street = 0 and Crime_Dist > item (.4 * (nlist4 + 1)) d and Crime_Dist <= item (.5 * (nlist4 + 1)) d] [set Crime_Metric 5]
+     ask patches with [street = 0 and Crime_Dist > item (.5 * (nlist4 + 1)) d and Crime_Dist <= item (.6 * (nlist4 + 1)) d] [set Crime_Metric 6]
+     ask patches with [street = 0 and Crime_Dist > item (.6 * (nlist4 + 1)) d and Crime_Dist <= item (.7 * (nlist4 + 1)) d] [set Crime_Metric 7]
+     ask patches with [street = 0 and Crime_Dist > item (.7 * (nlist4 + 1)) d and Crime_Dist <= item (.8 * (nlist4 + 1)) d] [set Crime_Metric 8]
+     ask patches with [street = 0 and Crime_Dist > item (.8 * (nlist4 + 1)) d and Crime_Dist <= item (.9 * (nlist4 + 1)) d] [set Crime_Metric 9]
+     ask patches with [street = 0 and Crime_Dist > item (.9 * (nlist4 + 1)) d ] [set Crime_Metric 10]
+
+  let f sort [Tourism_Dist] of patches with [street = 0]
+     let nlist5 length f
+     ask patches with [street = 0 and Tourism_Dist <= item (.1 * (nlist5 + 1)) f] [set Tourism_Metric 10]
+     ask patches with [street = 0 and Tourism_Dist > item (.1 * (nlist5 + 1)) f and Tourism_Dist <= item (.2 * (nlist5 + 1)) f] [set Tourism_Metric 9]
+     ask patches with [street = 0 and Tourism_Dist > item (.2 * (nlist5 + 1)) f and Tourism_Dist <= item (.3 * (nlist5 + 1)) f] [set Tourism_Metric 8]
+     ask patches with [street = 0 and Tourism_Dist > item (.3 * (nlist5 + 1)) f and Tourism_Dist <= item (.4 * (nlist5 + 1)) f] [set Tourism_Metric 7]
+     ask patches with [street = 0 and Tourism_Dist > item (.4 * (nlist5 + 1)) f and Tourism_Dist <= item (.5 * (nlist5 + 1)) f] [set Tourism_Metric 6]
+     ask patches with [street = 0 and Tourism_Dist > item (.5 * (nlist5 + 1)) f and Tourism_Dist <= item (.6 * (nlist5 + 1)) f] [set Tourism_Metric 5]
+     ask patches with [street = 0 and Tourism_Dist > item (.6 * (nlist5 + 1)) f and Tourism_Dist <= item (.7 * (nlist5 + 1)) f] [set Tourism_Metric 4]
+     ask patches with [street = 0 and Tourism_Dist > item (.7 * (nlist5 + 1)) f and Tourism_Dist <= item (.8 * (nlist5 + 1)) f] [set Tourism_Metric 3]
+     ask patches with [street = 0 and Tourism_Dist > item (.8 * (nlist5 + 1)) f and Tourism_Dist <= item (.9 * (nlist5 + 1)) f] [set Tourism_Metric 2]
+     ask patches with [street = 0 and Tourism_Dist > item (.9 * (nlist5 + 1)) f ] [set Tourism_Metric 1]
+
+  let g sort [Park_Dist] of patches with [street = 0]
+     let nlist6 length g
+     ask patches with [street = 0 and Park_Dist <= item (.1 * (nlist6 + 1)) g] [set Park_Metric 10]
+     ask patches with [street = 0 and Park_Dist > item (.1 * (nlist6 + 1)) g and Park_Dist <= item (.2 * (nlist6 + 1)) g] [set Park_Metric 9]
+     ask patches with [street = 0 and Park_Dist > item (.2 * (nlist6 + 1)) g and Park_Dist <= item (.3 * (nlist6 + 1)) g] [set Park_Metric 8]
+     ask patches with [street = 0 and Park_Dist > item (.3 * (nlist6 + 1)) g and Park_Dist <= item (.4 * (nlist6 + 1)) g] [set Park_Metric 7]
+     ask patches with [street = 0 and Park_Dist > item (.4 * (nlist6 + 1)) g and Park_Dist <= item (.5 * (nlist6 + 1)) g] [set Park_Metric 6]
+     ask patches with [street = 0 and Park_Dist > item (.5 * (nlist6 + 1)) g and Park_Dist <= item (.6 * (nlist6 + 1)) g] [set Park_Metric 5]
+     ask patches with [street = 0 and Park_Dist > item (.6 * (nlist6 + 1)) g and Park_Dist <= item (.7 * (nlist6 + 1)) g] [set Park_Metric 4]
+     ask patches with [street = 0 and Park_Dist > item (.7 * (nlist6 + 1)) g and Park_Dist <= item (.8 * (nlist6 + 1)) g] [set Park_Metric 3]
+     ask patches with [street = 0 and Park_Dist > item (.8 * (nlist6 + 1)) g and Park_Dist <= item (.9 * (nlist6 + 1)) g] [set Park_Metric 2]
+     ask patches with [street = 0 and Park_Dist > item (.9 * (nlist6 + 1)) g ] [set Park_Metric 1]
+
+   ask patches with [street = 0]
+   [
+    set tourism-value (CBD_Metric * CBD_Multiplier * 1.1) + (Avenue_Metric * Avenue_Multiplier) + (Vacant_Metric * Vacancy_Multiplier * 0.5) +         ;set land value = to the scaled amenity score
+                     (Crime_Metric * Crime_Multiplier * 0.9) + (Tourism_Metric * Tourism_Multiplier * 1.2) + (Park_Metric * Park_Multiplier * 0.9)
+   ]                                                                                                                                        ;variables for each amenity set by the user on the interface.
+end
+
+
+
+to update-patch-color                                                                                                                       ;this routine is here in case you want to implement zoning change
+
+  ask patches with [landUse = "residential"] [set pcolor yellow + 3]
+  ask patches with [landUse = "commercial"] [set pcolor red - 2]
+  ask patches with [landUse = "tourism"] [set pcolor magenta]
+  ask patches with [landUse = "park"] [set pcolor green + 2]
+  ask patches with [street = 0 and landUse = 0] [set pcolor blue - 3]
+end
+
+to create-parcel-points                                                                                                                    ;this routine allows us to create crime and vacant points
+                                                                                                                                           ;and any other point you want to create
+  ;crime------------------------
+  let landValuelist sort [land-value] of patches with [parcel = 1]                                                                         ;let a temporary variable named landValueList = sorted land value of parcels
+  let nLandValuelist length landValuelist
+  ask n-of 20 patches with [parcel = 1 and land-value <= item (.2 * (nLandValuelist + 1)) landValuelist] [sprout-crime 1]                  ;Have twenty of the top 20% lowest land values 'sprout' crimes
+  ask crime
+   [
+     set color grey
+     set shape "circle"
+     set size .5
+   ]
+
+  ;vacant------------------------
+  ask n-of (count patches with [parcel = 1] * Initial_Vacancy_Rate) patches with [parcel = 1] [sprout-vacant 1 ]                           ;Note that you can set Initial_Vacancy_Rate in the interface
+  ask vacant
+   [
+     set color white
+     set shape "x"
+     set size .5
+   ]
+end
+
+to convert-airbnb
+set rental_sum count rentals
+set Airbnb_sum count AirBNBs
+
+ask patches with [landUse = "residential"]
+[
+  set Airbnb_count count AirBNBs in-radius 8                               ;the number of nearby Airbnb (radius<8)
+  set Airbnb_rent tourism-value - (Airbnb_count * 1.2)                     ;the rent of Airbnb is determined by toursim potential of the patch and the number of competitors
+  set rental_rent land-value + (initial_count - rental_sum) * 0.05         ;the rent of long-term rental units is determined by land value of the patch and the total supply of rental units in the neighborhood
+]
+
+ask rentals
+[
+let my-airbnb-rent [Airbnb_rent] of patch-here
+let my-rental-rent [rental_rent] of patch-here
+let my-airbnb-count [Airbnb_count] of patch-here
+
+if my-airbnb-rent > 1.05 * rental_rent and change_count <= 10    ;if operating Airbnb is more profitable, convert long-term rental to Airbnb
+  [                                                                                      ;to prevent the conversion taking place too many times,
+    set color pink                                                                       ;we assume that the landlord will give up conversion after 10 times
+    set breed AirBNBs
+    set shape "circle"
+    set change_count (change_count + 1)
+  ]
+]
+
+ask AirBNBs
+[
+let my-airbnb-rent [Airbnb_rent] of patch-here
+let my-rental-rent [rental_rent] of patch-here
+let my-airbnb-count [Airbnb_count] of patch-here
+
+if my-rental-rent > Airbnb_rent and change_count <= 10
+  [
+    set color cyan + 2
+    set breed rentals
+    set shape "circle"
+    set change_count (change_count + 1)
+  ]
+]
+
+ask vacant
+[
+  let Airbnb_count5 count AirBNBs in-radius 5                                          ;the emergence of Airbnb will facilitate the infrastructure of tourism development
+  let my-airbnb-count [Airbnb_count5] of patch-here                                    ;so more investment will be directed to the area and reduce the vacancy here
+  let my-landuse [landUse] of patch-here
+
+  if my-airbnb-count > 3 and  my-airbnb-count <= 8 and my-landuse = "residential"      ;assume that a part of vacant units will be converted to Airbnb
+  [
+      set color pink
+      set breed AirBNBs
+      set shape "circle"
+      set size 1
+  ]
+]
+
+ask patches with [count vacant-here > 0]                                              ;if the number of Airbnb here is too large
+[
+  let Airbnb_count5 count AirBNBs in-radius 5                                         ;the vacant land will be occupied by other landuse instead of becoming Airbnb
+  if Airbnb_count5 > 8
+  [
+    ask one-of vacant-here[die]
+  ]
+
+]
+
+
+tick
+calculate-land-value
+calculate-tourism-value
+
+show count rentals
+
+end
+
+
+to
+  go
+end
